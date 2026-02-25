@@ -1,50 +1,31 @@
-from typing import TypedDict, Annotated
+import streamlit as st
+from langchain_core.messages import HumanMessage
 
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_ollama import ChatOllama
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.constants import START, END
-from langgraph.graph import add_messages, StateGraph
+from backend.core import chatbot
 
 
-class ChatState(TypedDict):
-    messages : Annotated[list[BaseMessage], add_messages]
+CONFIG = {'configurable':{'thread_id':'thread-1'}}
 
-llm = ChatOllama(
-    model="llama3.1:latest",
-    temperature=0.4
-)
 
-def chat_node(state: ChatState):
-    messages = state["messages"]
 
-    response = llm.invoke(messages)
+if 'message_history' not in st.session_state:
+    st.session_state['message_history'] = []
 
-    return {'messages': [response]}
+for message in st.session_state['message_history']:
+    with st.chat_message(message['role']):
+        st.text(message['content'])
 
-if __name__ == "__main__":
-    graph  = StateGraph(ChatState)
+user_input = st.chat_input('Type here')
 
-    graph.add_node('chat_node', chat_node)
+if user_input:
+    st.session_state['message_history'].append({'role': 'user', 'content': user_input})
+    with st.chat_message('user'):
+        st.text(user_input)
 
-    graph.add_edge(START, 'chat_node')
-    graph.add_edge('chat_node', END)
+    with st.spinner("Processing..."):
+        response = chatbot.invoke({'messages': [HumanMessage(content=user_input)]}, config=CONFIG)
+        ai_message = response['messages'][-1].content
 
-    checkpointer = MemorySaver()
-    chatbot = graph.compile(checkpointer=checkpointer)
-
-    thread_id = '1'
-    config = {'configurable', {'thread_id': thread_id}}
-
-    while True:
-        user_message = input("Type here: ")
-
-        print("User:",user_message)
-
-        if user_message.strip().lower() in ['exit', 'quit', 'bye']:
-            break
-
-        response = chatbot.invoke({'messages': [HumanMessage(content=user_message)]},config=config)
-
-        print('AI:',response['messages'][-1].content)
-
+    st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
+    with st.chat_message('assistant'):
+        st.text(ai_message)
