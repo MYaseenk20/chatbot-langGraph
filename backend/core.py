@@ -1,8 +1,9 @@
+import sqlite3
 from typing import TypedDict, Annotated
 
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_ollama import ChatOllama
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.constants import START, END
 from langgraph.graph import add_messages, StateGraph
 
@@ -29,25 +30,14 @@ graph.add_node('chat_node', chat_node)
 graph.add_edge(START, 'chat_node')
 graph.add_edge('chat_node', END)
 
-checkpointer = MemorySaver()
+
+conn = sqlite3.connect(database='chatbot.db',check_same_thread=False)
+
+checkpointer = SqliteSaver(conn=conn)
 chatbot = graph.compile(checkpointer=checkpointer)
 
-
-
-
-
-    # thread_id = '1'
-    # config = {'configurable', {'thread_id': thread_id}}
-    #
-    # while True:
-    #     user_message = input("Type here: ")
-    #
-    #     print("User:",user_message)
-    #
-    #     if user_message.strip().lower() in ['exit', 'quit', 'bye']:
-    #         break
-    #
-    #     response = chatbot.invoke({'messages': [HumanMessage(content=user_message)]},config=config)
-    #
-    #     print('AI:',response['messages'][-1].content)
-
+def retrieve_all_threads():
+    all_threads = set()
+    for checkpoint in checkpointer.list(None):
+        all_threads.add(checkpoint.config['configurable']['thread_id'])
+    return list(all_threads)
