@@ -3,6 +3,7 @@ from datetime import datetime
 
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langgraph.types import Command
 
 from backend.core import chatbot, retrieve_all_threads, ingest_pdf, thread_document_metadata
 
@@ -106,6 +107,7 @@ def stream_ai_response(user_input: str, config: dict):
     """
     status_box = None
     pending_tool_name = None
+    interrupt_value = None
 
     for message_chunk, _metadata in chatbot.stream(
         {"messages": [HumanMessage(content=user_input)]},
@@ -143,7 +145,16 @@ def stream_ai_response(user_input: str, config: dict):
             state="complete",
             expanded=False,
         )
-
+    state = chatbot.get_state(config=config)
+    if state.next:  # graph is paused / waiting
+        for task in state.tasks:
+            if hasattr(task, "interrupts") and task.interrupts:
+                interrupt_msg = task.interrupts[0].value  # e.g. "Approve buying 5 shares of AAPL?"
+                st.session_state.pending_interrupt = {
+                    "config": config,
+                    "message": interrupt_msg,
+                }
+                break
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Session State Initialisation
@@ -161,6 +172,9 @@ if "message_history" not in st.session_state:
 # RAG: per-thread ingested doc tracking  { thread_id: { filename: summary_dict } }
 if "ingested_docs" not in st.session_state:
     st.session_state.ingested_docs = {}
+
+if "pending_interrupt" not in st.session_state:
+    st.session_state.pending_interrupt = None
 
 # Make sure the active thread is registered
 _register_thread(st.session_state.thread_id)
@@ -262,6 +276,60 @@ for message in st.session_state.message_history:
 
 # Chat input
 user_input = st.chat_input("Ask about your document or chat freely…")
+
+# ── Human-in-the-loop: Stock Purchase Approval ────────────────────────────────
+if "pending_interrupt" in st.session_state and st.session_state.pending_interrupt:
+    interrupt_data = st.session_state.pending_interrupt
+
+    with st.chat_message("assistant"):
+        st.warning(f"⚠️ **Approval Required**\n\n{interrupt_data['message']}")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Yes, approve", type="primary", use_container_width=True):
+                st.session_state.pending_interrupt = None
+
+                # Resume the graph with "yes"
+                with st.chat_message("assistant"):
+                    with st.spinner("Processing..."):
+                        result = chatbot.invoke(
+                            Command(resume="yes"),
+                            config=interrupt_data["config"],
+                        )
+                    # Get last AI message
+                    last_ai = next(
+                        (m for m in reversed(result["messages"])
+                         if isinstance(m, AIMessage) and m.content),
+                        None
+                    )
+                    if last_ai:
+                        st.markdown(last_ai.content)
+                        st.session_state.message_history.append(
+                            {"role": "assistant", "content": last_ai.content}
+                        )
+                st.rerun()
+
+        with col2:
+            if st.button("❌ No, cancel", use_container_width=True):
+                st.session_state.pending_interrupt = None
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Processing..."):
+                        result = chatbot.invoke(
+                            Command(resume="no"),
+                            config=interrupt_data["config"],
+                        )
+                    last_ai = next(
+                        (m for m in reversed(result["messages"])
+                         if isinstance(m, AIMessage) and m.content),
+                        None
+                    )
+                    if last_ai:
+                        st.markdown(last_ai.content)
+                        st.session_state.message_history.append(
+                            {"role": "assistant", "content": last_ai.content}
+                        )
+                st.rerun()
 
 if user_input:
     # Show user message immediately
