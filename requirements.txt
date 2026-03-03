@@ -3,3 +3,6 @@ langchain-core
 langchain-ollama
 langgraph
 streamlit
+langchain-community
+requests
+ddgs
